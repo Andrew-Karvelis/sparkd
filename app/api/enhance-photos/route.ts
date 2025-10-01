@@ -5,7 +5,7 @@ import { Buffer } from 'buffer';
 import { validateProfilePhoto } from "@/lib/face-detection";
 import { APP_CONFIG, ENHANCED_THEMES, ERROR_MESSAGES, HYPER_REALISTIC_PROMPT } from "@/lib/config";
 import { getServerSession } from "next-auth/next"
-import { authOptions } from "../auth/[...nextauth]/route"
+import { authOptions } from "@/lib/auth";
 import { prisma } from '@/lib/prisma';
 import { useState } from "react";
 
