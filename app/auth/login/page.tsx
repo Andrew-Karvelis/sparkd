@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/components/providers/AuthProvider'
+import { signIn } from 'next-auth/react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Sparkles, Eye, EyeOff } from 'lucide-react'
@@ -14,13 +14,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  
-  const { login } = useAuth()
+
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (!email || !password) {
       toast.error('Please fill in all fields')
       return
@@ -28,11 +27,21 @@ export default function LoginPage() {
 
     setIsLoading(true)
     try {
-      await login(email, password)
-      toast.success('Login successful!')
-      router.push('/dashboard')
-    } catch (error) {
-      toast.error('Login failed. Please check your credentials.')
+      const result = await signIn('credentials', {
+        redirect: false,
+        email,
+        password
+      })
+
+      if (result?.error) {
+        toast.error(result.error || 'Login failed. Please check your credentials.')
+      } else {
+        toast.success('Login successful!')
+        router.push('/dashboard') // redirect after login
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('Something went wrong during login.')
     } finally {
       setIsLoading(false)
     }
@@ -97,11 +106,7 @@ export default function LoginPage() {
               </Link>
             </div>
 
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isLoading}
-            >
+            <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? 'Signing in...' : 'Sign in'}
             </Button>
           </form>

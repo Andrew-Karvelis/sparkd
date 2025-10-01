@@ -4,6 +4,11 @@ import { toFile } from "openai/uploads";
 import { Buffer } from 'buffer';
 import { validateProfilePhoto } from "@/lib/face-detection";
 import { APP_CONFIG, ENHANCED_THEMES, ERROR_MESSAGES, HYPER_REALISTIC_PROMPT } from "@/lib/config";
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "../auth/[...nextauth]/route"
+import { prisma } from '@/lib/prisma';
+import { useState } from "react";
+
 
 // Ensure this route runs on the Node.js runtime (native modules allowed)
 export const runtime = "nodejs";
@@ -18,9 +23,23 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const selectedThemes = JSON.parse(formData.get("themes") as string || "[]");
+    const session = await getServerSession(authOptions)
 
-    // Optional client-provided mask for background (preferred)
-    const uploadedMask = formData.get("mask") as File | null;
+    if (!session) return new Response("Unauthorized", { status: 401 })
+
+    // check credits before generating
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email! },
+      select: { credits: true, id: true }
+    });
+
+    if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+    const creditsRequired = selectedThemes.length; // or 1 per enhancement
+    if (user.credits < creditsRequired) {
+      return NextResponse.json({ error: 'Insufficient credits' }, { status: 400 });
+    }
+
     // Validation
     if (!file) {
       return NextResponse.json({ error: ERROR_MESSAGES.noFile }, { status: 400 });
@@ -60,44 +79,7 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    // Get mask: prefer client-provided; otherwise attempt server-side background removal, else fallback to no mask
-    let maskBuffer: Buffer | null = null;
-    try {
-      const sharpLocal = (await import("sharp")).default;
 
-      if (uploadedMask) {
-        console.log("Using client-provided mask");
-        const maskArrayBuffer = await uploadedMask.arrayBuffer();
-        maskBuffer = Buffer.from(maskArrayBuffer);
-        // Normalize to target size and format
-        maskBuffer = await sharpLocal(maskBuffer).resize(1024, 1024).png().toBuffer();
-        // Feather 1px to avoid halos
-        maskBuffer = await sharpLocal(maskBuffer).blur(1).toBuffer();
-      } else {
-        console.log("No client mask. Attempting server-side background removal...");
-        const { removeBackground } = await import("@imgly/background-removal-node");
-        const rawMask = await removeBackground(processedImageBuffer, {
-          output: { format: 'image/png', quality: 100 },
-        });
-
-        if (Buffer.isBuffer(rawMask)) {
-          maskBuffer = rawMask as Buffer;
-        } else if (rawMask instanceof Uint8Array) {
-          maskBuffer = Buffer.from(rawMask);
-        } else if (typeof (rawMask as any)?.arrayBuffer === 'function') {
-          const ab = await (rawMask as any).arrayBuffer();
-          maskBuffer = Buffer.from(ab);
-        } else {
-          throw new Error("Unexpected mask type returned from background removal");
-        }
-
-        maskBuffer = await sharpLocal(maskBuffer).resize(1024, 1024).png().toBuffer();
-        maskBuffer = await sharpLocal(maskBuffer).blur(1).toBuffer();
-      }
-    } catch (maskErr: any) {
-      console.warn("Mask unavailable (client + server attempts failed):", maskErr?.message || maskErr);
-      maskBuffer = null;
-    }
 
     const generatedImages: { theme: string; imageUrl: string; success: boolean; method: string }[] = [];
     const errors: { theme: string; error: string }[] = [];
@@ -110,47 +92,59 @@ export async function POST(req: Request) {
           continue;
         }
 
-        console.log(`Generating themed ${theme} image via gpt-image-1 edit...`);
+        console.log(`Generating hyper-realistic ${theme} image...`);
 
-        // Require a mask so we only change background and preserve the subject exactly
-        if (!maskBuffer) {
-          errors.push({ theme, error: "No mask available (enable client-side mask generation to preserve likeness)" });
-          continue;
-        }
+        const editPrompt = `
+${HYPER_REALISTIC_PROMPT}
 
-        // Combine global hyper-realistic guidance with theme
-        const editPrompt = `${HYPER_REALISTIC_PROMPT}\n\nReplace ONLY the background/environment with a hyper-realistic scene that fits this theme:\n${themeConfig.prompt}\n\nStrict rules:\n- Do NOT alter the person’s face, skin tone, eye color, hair color/length, body or clothing\n- Keep the original person exactly as in the uploaded photo\n- Ultra-realistic, photographic quality (not AI-rendered look)`;
+Generate a **hyper-realistic, photographic-quality** image. Replace ONLY the background/environment with a scene that matches this theme:
+${themeConfig.prompt}
 
-        const featheredMask = await (await import("sharp")).default(maskBuffer).blur(1).toBuffer();
+Strict rules:
+- Do NOT alter the person’s face, body, clothing, or likeness
+- Preserve exact identity (facial structure, hair, skin, eyes, proportions)
+- Must look like a RAW DSLR photograph, not AI-art
+`;
 
-        // When building the edit request:
+
         const editResp = await openai.images.edit({
           model: APP_CONFIG.imageGeneration.editModel || "gpt-image-1",
           prompt: editPrompt,
-          image: new File([new Uint8Array(processedImageBuffer)], "image.png", { type: "image/png" }),
-          mask: new File([new Uint8Array(featheredMask)], "mask.png", { type: "image/png" }),
+          image: await toFile(processedImageBuffer, "image.png", { type: "image/png" }),
           size: APP_CONFIG.imageGeneration.imageSize,
-          n: 3, // generate 3 variations per theme
+          n: 1,
+        });
+        console.log("OpenAI edit response:", editResp);
+
+        if (!editResp.data?.length) {
+          console.error("Empty OpenAI response:", JSON.stringify(editResp, null, 2));
+          errors.push({ theme, error: "No image returned" });
+          continue;
+        }
+
+        const result = editResp.data[0];
+        const imageUrl =
+          result.url ||
+          (result.b64_json ? `data:image/png;base64,${result.b64_json}` : null);
+
+        if (!imageUrl) {
+          errors.push({ theme, error: "No usable image (url/b64 missing)" });
+          continue;
+        }
+
+
+        // ✅ Deduct only on success
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { credits: { decrement: 1 } },
         });
 
-
-
-        // let imageUrl = editResp.data?.[0]?.url as string | undefined;
-        // if (!imageUrl && editResp.data?.[0]?.b64_json) {
-        //   imageUrl = `data:image/png;base64,${editResp.data[0].b64_json}`;
-        // }
-
-        // if (!imageUrl) {
-        //   errors.push({ theme, error: "gpt-image-1 returned no image" });
-        //   continue;
-        // }
-
-        // generatedImages.push({
-        //   theme,
-        //   imageUrl,
-        //   success: true,
-        //   method: "gpt-image-1 edit (background replacement)"
-        // });
+        const savedImage = await prisma.gallery.create({
+          data: {
+            url: imageUrl,
+            userId: user.id,
+          },
+        });
 
         if (editResp.data && Array.isArray(editResp.data)) {
           editResp.data.forEach((result, i) => {
@@ -158,33 +152,36 @@ export async function POST(req: Request) {
               result.url ||
               (result.b64_json ? `data:image/png;base64,${result.b64_json}` : null);
 
-            if (imageUrl) {
-              generatedImages.push({
-                theme,
-                imageUrl,
-                success: true,
-                method: `gpt-image-1 edit (background replacement) [variation ${i + 1}]`,
-              });
+            if (!imageUrl) {
+              errors.push({ theme, error: "No usable image (url/b64 missing)" });
+              return;
             }
+
+
+            generatedImages.push({
+              theme,
+              imageUrl: savedImage.url,
+              success: true,
+              method: `gpt-image-1 edit (background replacement) [variation ${i + 1}]`,
+            });
           });
+        } else {
+          errors.push({ theme, error: "No data array returned from OpenAI" });
         }
+
 
 
       } catch (themeError: any) {
         console.error(`Error generating image for theme ${theme}:`, themeError);
-
-        let errorMessage = "Failed to generate image";
-        if (themeError.error?.message) errorMessage = themeError.error.message;
-        else if (themeError.message) errorMessage = themeError.message;
-
-        errors.push({ theme, error: errorMessage });
+        errors.push({ theme, error: themeError.message || "Failed to generate image" });
       }
 
-      // Delay between requests (rate limit safety)
+      // Rate limit safety
       if (selectedThemes.indexOf(theme) < selectedThemes.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, APP_CONFIG.imageGeneration.requestDelay));
+        await new Promise(res => setTimeout(res, APP_CONFIG.imageGeneration.requestDelay));
       }
     }
+
 
     const response = {
       success: generatedImages.length > 0,
@@ -204,7 +201,11 @@ export async function POST(req: Request) {
       methods: generatedImages.map(img => img.method),
     });
 
+
+
     return NextResponse.json(response);
+
+
 
   } catch (error: any) {
     console.error("Photo Enhancement Error:", error);

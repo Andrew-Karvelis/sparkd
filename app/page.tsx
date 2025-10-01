@@ -26,11 +26,11 @@ export default function HomePage() {
         <div className="text-center">
           <h1 className="text-5xl md:text-7xl font-bold text-gray-900 mb-6">
             Transform Your
-            <span className="text-primary-500 block">Dating Profile</span>
+            <span className="text-primary-500 block">Boring Photos</span>
           </h1>
           <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
             Upload a photo and let AI generate stunning profile images based on your interests. 
-            Stand out on dating apps with personalized, professional-looking photos.
+            Stand out now with personalized, professional-looking photos.
           </p>
           
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">

@@ -3,7 +3,6 @@
 import React, { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/components/providers/AuthProvider'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Sparkles, Eye, EyeOff } from 'lucide-react'
@@ -20,8 +19,7 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  
-  const { register } = useAuth()
+
   const router = useRouter()
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -33,7 +31,7 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (!formData.email || !formData.password || !formData.confirmPassword) {
       toast.error('Please fill in all required fields')
       return
@@ -51,11 +49,27 @@ export default function RegisterPage() {
 
     setIsLoading(true)
     try {
-      await register(formData.email, formData.password, formData.phone || undefined)
+      // Send plain password to server; server will hash it
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          phone: formData.phone,
+          password: formData.password
+        })
+      })
+
+      if (!res.ok) {
+        const { error } = await res.json()
+        throw new Error(error || 'Registration failed')
+      }
+
       toast.success('Registration successful! Welcome to Sparkd!')
-      router.push('/dashboard')
-    } catch (error) {
-      toast.error('Registration failed. Please try again.')
+      router.push('/auth/login')
+    } catch (error: any) {
+      toast.error(error.message || 'Registration failed. Please try again.')
     } finally {
       setIsLoading(false)
     }
@@ -71,7 +85,7 @@ export default function RegisterPage() {
             <span className="text-2xl font-bold text-gray-900">Sparkd</span>
           </Link>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Create your account</h1>
-          <p className="text-gray-600">Join thousands of users transforming their dating profiles</p>
+          <p className="text-gray-600">Join thousands of users transforming their photos today!</p>
         </div>
 
         {/* Registration Form */}
@@ -164,11 +178,7 @@ export default function RegisterPage() {
               </label>
             </div>
 
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isLoading}
-            >
+            <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? 'Creating account...' : 'Create account'}
             </Button>
           </form>
@@ -176,24 +186,10 @@ export default function RegisterPage() {
           <div className="mt-6 text-center">
             <p className="text-sm text-gray-600">
               Already have an account?{' '}
-              <Link
-                href="/auth/login"
-                className="text-primary-600 hover:text-primary-500 font-medium"
-              >
+              <Link href="/auth/login" className="text-primary-600 hover:text-primary-500 font-medium">
                 Sign in
               </Link>
             </p>
-          </div>
-        </div>
-
-        {/* Benefits */}
-        <div className="mt-8 text-center">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">What you get with Sparkd:</h3>
-          <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
-            <div>✨ 3 free AI generations</div>
-            <div>🎯 Interest-based themes</div>
-            <div>📱 High-quality downloads</div>
-            <div>💳 Flexible payment options</div>
           </div>
         </div>
       </div>

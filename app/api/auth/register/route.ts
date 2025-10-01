@@ -1,50 +1,55 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
+import bcrypt from 'bcrypt'
 
-export async function POST(request: NextRequest) {
+interface RegisterRequest {
+  name: string
+  email: string
+  password: string
+}
+
+export async function POST(req: Request) {
   try {
-    const body = await request.json()
-    const { email, password, phone, name } = body
+    const body: RegisterRequest = await req.json()
+    const { name, email, password } = body
 
-    // TODO: Implement actual registration logic
-    // 1. Validate input
-    if (!email || !password) {
-      return NextResponse.json(
-        { error: 'Email and password are required' },
-        { status: 400 }
-      )
+    if (!email || !password || !name) {
+      console.error('❌ Missing field:', { name, email, password })
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    // 2. Check if user already exists
-    // 3. Hash password
-    // 4. Create user in database
-    // 5. Generate JWT token
-
-    // Mock response for now
-    const mockUser = {
-      id: '1',
-      email,
-      phone,
-      name,
-      credits: 10, // Free credits for new users
-      subscription: {
-        plan: 'free',
-        status: 'active',
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-      }
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({ where: { email } })
+    if (existingUser) {
+      console.error('❌ User already exists:', email)
+      return NextResponse.json({ error: 'User already exists' }, { status: 400 })
     }
 
-    const mockToken = 'mock_jwt_token_here'
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10)
+    console.log('Hashed password:', hashedPassword)
 
-    return NextResponse.json({
-      user: mockUser,
-      token: mockToken
-    })
+    let newUser;
+    try {
 
-  } catch (error) {
-    console.error('Registration error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+      newUser = await prisma.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          credits: 3 // starting credits
+        }
+      })
+    } catch (err) {
+      console.error('Prisma create error:', err)
+      return NextResponse.json({ error: 'Database error' }, { status: 500 })
+    }
+
+    console.log('✅ New user created:', newUser.id, newUser.email)
+
+    return NextResponse.json({ success: true, userId: newUser.id })
+  } catch (err: any) {
+    console.error('🔥 Registration error:', err.message, err.stack)
+    return NextResponse.json({ error: 'Registration failed' }, { status: 500 })
   }
 }

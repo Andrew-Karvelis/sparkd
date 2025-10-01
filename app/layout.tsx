@@ -2,27 +2,23 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import { Toaster } from 'react-hot-toast'
-import { AuthProvider } from '@/components/providers/AuthProvider'
+import { Providers } from '@/components/Providers'
 
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Sparkd - AI Dating Profile Generator',
-  description: 'Transform your dating profile with AI-generated images based on your interests',
+  title: 'Sparkd',
+  description: 'AI profile generator',
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body className={inter.className}>
-        <AuthProvider>
+        <Providers>
           {children}
           <Toaster position="top-right" />
-        </AuthProvider>
+        </Providers>
       </body>
     </html>
   )
