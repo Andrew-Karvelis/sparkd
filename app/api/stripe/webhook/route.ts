@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-export const runtime = 'nodejs'; 
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
@@ -15,10 +15,7 @@ export async function POST(request: NextRequest) {
 
     if (!signature || !webhookSecret) {
       console.error("Missing signature or webhook secret");
-      return NextResponse.json(
-        { error: "Missing signature or webhook secret" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing signature or webhook secret" }, { status: 400 });
     }
 
     let event: Stripe.Event;
@@ -30,18 +27,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
 
-    // Handle events
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
+        console.log("checkout.session.completed metadata:", session.metadata);
 
-        console.log("Payment successful:", {
-          sessionId: session.id,
-          customerId: session.customer,
-          metadata: session.metadata,
-        });
-
-        // Update user credits in DB with error handling
         if (session.metadata?.userId && session.metadata?.credits) {
           try {
             const updatedUser = await prisma.user.update({
@@ -51,18 +41,49 @@ export async function POST(request: NextRequest) {
             console.log(`Credits updated for user ${updatedUser.id}: +${session.metadata.credits}`);
           } catch (dbError) {
             console.error("Failed to update user credits:", dbError);
-            // Still return 200 to Stripe to avoid retries
           }
         } else {
           console.warn("Missing userId or credits in session metadata:", session.metadata);
         }
-
         break;
       }
 
-      case "payment_intent.succeeded": {
-        const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        console.log("Payment succeeded:", paymentIntent.id);
+      case "payment_intent.succeeded":
+      case "charge.succeeded": {
+        const paymentIntentId = (event.data.object as any).payment_intent || (event.data.object as any).id;
+        if (!paymentIntentId) {
+          console.warn("No payment_intent found on event:", event.type);
+          break;
+        }
+
+        try {
+          // Fetch the checkout session associated with this payment_intent
+          const sessions = await stripe.checkout.sessions.list({ payment_intent: paymentIntentId, limit: 1 });
+          const session = sessions.data[0];
+
+          if (!session) {
+            console.warn("No checkout session found for payment_intent:", paymentIntentId);
+            break;
+          }
+
+          console.log("Retrieved checkout session metadata:", session.metadata);
+
+          if (session.metadata?.userId && session.metadata?.credits) {
+            try {
+              const updatedUser = await prisma.user.update({
+                where: { id: session.metadata.userId },
+                data: { credits: { increment: Number(session.metadata.credits) } },
+              });
+              console.log(`Credits updated for user ${updatedUser.id}: +${session.metadata.credits}`);
+            } catch (dbError) {
+              console.error("Failed to update user credits (fallback):", dbError);
+            }
+          } else {
+            console.warn("Missing metadata on retrieved checkout session:", session.metadata);
+          }
+        } catch (err) {
+          console.error("Error fetching checkout session by payment_intent:", err);
+        }
         break;
       }
 
@@ -79,14 +100,9 @@ export async function POST(request: NextRequest) {
         console.log(`Unhandled event type: ${event.type}`);
     }
 
-    // Always return 200 to acknowledge receipt
     return NextResponse.json({ received: true }, { status: 200 });
   } catch (error) {
     console.error("Webhook error:", error);
-    // Still return 200 to prevent Stripe retries for non-recoverable errors
-    return NextResponse.json(
-      { error: "Webhook handler failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
   }
 }
