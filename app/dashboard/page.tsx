@@ -94,10 +94,8 @@ const DashboardPage = () => {
       const formData = new FormData();
       formData.append('file', selectedPhoto);
       formData.append('themes', JSON.stringify(selectedInterests));
-      console.log('Submitting photo and themes AFTER:', selectedPhoto, selectedInterests);
 
       const res = await fetch('/api/enhance-photos', { method: 'POST', body: formData });
-      console.log('enhancje photos res:', res)
       if (!res.ok) {
         const errText = await res.text();
         console.error('Enhance photos failed:', errText);
@@ -105,7 +103,6 @@ const DashboardPage = () => {
       }
 
       const data = await res.json();
-      console.log("enhance-photos response:", data);
       if (data.images && Array.isArray(data.images)) {
         setGeneratedImages(prev => [...data.images, ...prev]);
         toast.success(`Generated ${data.images.length} image${data.images.length !== 1 ? 's' : ''} successfully!`);
