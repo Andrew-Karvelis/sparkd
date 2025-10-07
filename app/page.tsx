@@ -15,7 +15,7 @@ export default function HomePage() {
           <Link href="/auth/login">
             <Button variant="outline">Login</Button>
           </Link>
-          <Link href="/auth/register">
+          <Link href="/quiz">
             <Button>Get Started</Button>
           </Link>
         </div>
@@ -34,7 +34,7 @@ export default function HomePage() {
           </p>
           
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
-            <Link href="/auth/register">
+            <Link href="/quiz">
               <Button size="lg" className="text-lg px-8 py-4">
                 Start Creating
               </Button>
